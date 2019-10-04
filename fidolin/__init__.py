@@ -1,3 +1,4 @@
+from . import cli
 from . import ctaphid
 from . import u2f
 

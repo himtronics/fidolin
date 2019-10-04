@@ -1,9 +1,6 @@
 import enum, os, time
 
 import hid
-import usb.core, usb.util
-from usb.legacy import CLASS_HID
-from usb.legacy import REQ_GET_DESCRIPTOR
 
 from fidolin.u2f import U2F_Command, U2F_Request, U2F_Response
 
@@ -391,6 +388,7 @@ def hid_fido_tokens():
         usage_page = hid_device_info['usage_page']
         usage = hid_device_info['usage']
         if usage_page == 0xf1d0 and usage == 0x01:
+            print(hid_device_info)
             vendor_id = hid_device_info['vendor_id']
             product_id = hid_device_info['product_id']
             serial_number = hid_device_info['serial_number']
@@ -402,33 +400,4 @@ def hid_fido_tokens():
             hid_fido_token = HIDFidoToken(hid_device, hid_device_info)
             yield hid_fido_token
 
-fido_tokens = hid_fido_tokens()
-for fido_token in fido_tokens:
-    print(fido_token)
-    init_request = CTAPHID_Request(fido_token, CTAPHID_Command.INIT)
-    init_response = fido_token.request(init_request)
-    print(init_response._initialisation_packet)
-    #if not init_request_packet.is_valid_response(init_response_packet):
-    #    fido_token.hid_device.close()
-    #    continue
-    fido_token.channel_id = init_response._initialisation_packet.new_channel_id
-
-    wink_request = CTAPHID_Request(fido_token, CTAPHID_Command.WINK)
-    wink_response = fido_token.request(wink_request)
-    print('wink response', wink_response._initialisation_packet)
-
-    ping_request = CTAPHID_Request(fido_token, CTAPHID_Command.PING,
-        bytes(20*'abcde', encoding='ascii'))
-    ping_response = fido_token.request(ping_request)
-    print('ping response', ping_response.payload)
-
-    u2f_version_request = U2F_Request(ins=U2F_Command.VERSION)
-    print('u2f_version_request', u2f_version_request)
-    msg_request = CTAPHID_Request(fido_token, CTAPHID_Command.MSG,
-        u2f_version_request)
-    msg_response = fido_token.request(msg_request)
-    u2f_version_response = U2F_Response(msg_response.payload)
-    u2f_version_response.check_sw()
-    print('msg response', u2f_version_response.data)
-    fido_token.close()
 

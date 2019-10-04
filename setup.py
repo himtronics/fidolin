@@ -44,11 +44,17 @@ setup(
     url='https://github.com/Yubico/python-fido2',
     python_requires='>=3.6',
     install_requires=[
+        'click',
         'cryptography>=1.5',
         'hid',
     ],
     extras_require={
         'pcsc': ['pyscard']
+    },
+    entry_points={
+        'console_scripts': [
+            'fidolin=fidolin.cli:main'
+        ]
     },
     classifiers=[
         'License :: OSI Approved :: BSD License',
