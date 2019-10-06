@@ -382,22 +382,29 @@ class HIDFidoToken(FidoToken):
     def close(self):
         self.hid_device.close()
 
-def hid_fido_tokens():
+def hid_fido_tokens(vendor_id=None, product_id=None, check_usage=None):
+    if check_usage is None and vendor_id is None and product_id is None:
+        check_usage = True
     hid_device_infos = hid.enumerate()
     for hid_device_info in hid_device_infos:
-        usage_page = hid_device_info['usage_page']
-        usage = hid_device_info['usage']
-        if usage_page == 0xf1d0 and usage == 0x01:
-            print(hid_device_info)
-            vendor_id = hid_device_info['vendor_id']
-            product_id = hid_device_info['product_id']
-            serial_number = hid_device_info['serial_number']
-            try:
-                hid_device = hid.Device(vendor_id, product_id)#, serial_number)
-            except:
-                print('failed to open device 0x%x 0x%x' % (vendor_id, product_id))
-                raise
-            hid_fido_token = HIDFidoToken(hid_device, hid_device_info)
-            yield hid_fido_token
+        device_vendor_id = hid_device_info['vendor_id']
+        device_product_id = hid_device_info['product_id']
+        device_serial_number = hid_device_info['serial_number']
+        if vendor_id and vendor_id != device_vendor_id:
+            continue
+        if product_id and product_id != device_product_id:
+            continue
+        if check_usage:
+            usage_page = hid_device_info['usage_page']
+            usage = hid_device_info['usage']
+            if usage_page != 0xf1d0 or usage != 0x01:
+                continue
+        try:
+            hid_device = hid.Device(device_vendor_id, device_product_id)#, serial_number)
+        except:
+            print('failed to open device 0x%x 0x%x' % (device_vendor_id, device_product_id))
+            raise
+        hid_fido_token = HIDFidoToken(hid_device, hid_device_info)
+        yield hid_fido_token
 
 

@@ -9,9 +9,11 @@ import click
 @click.option('--transport', '-t', multiple=True,
     type=click.Choice(['BLE', 'NFC', 'USB'], case_sensitive=False),
     help='search for tokens on the corrsponding transport(s)')
+@click.option('--vendor_id', '-v')
 @click.pass_context
-def cli(context, transport):
-    for fido_token in hid_fido_tokens():
+def cli(context, transport, vendor_id):
+    vendor_id = int(vendor_id) if vendor_id else None
+    for fido_token in hid_fido_tokens(vendor_id=vendor_id):
         print(fido_token)
         init_request = CTAPHID_Request(fido_token, CTAPHID_Command.INIT)
         init_response = fido_token.request(init_request)
