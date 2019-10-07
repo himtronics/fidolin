@@ -4,6 +4,10 @@ import hid
 
 from fidolin.u2f import U2F_Command, U2F_Request, U2F_Response
 
+HID_FRAME_SIZE = 64
+HID_INIT_PAYLOAD_LEN = HID_FRAME_SIZE - 7
+HID_CONT_PAYLOAD_LEN = HID_FRAME_SIZE - 5
+
 class CTAPHID_Command(enum.IntEnum):
     PING = 0x01
     MSG = 0x03
@@ -25,7 +29,7 @@ class CTAPHID_Packet(bytearray):
     _bytecount = None
 
     def __init__(self, fido_token=None):
-        super().__init__(64)
+        super().__init__(HID_FRAME_SIZE)
         if fido_token:
             self.channel_id = fido_token.channel_id
 
@@ -117,13 +121,13 @@ class CTAPHID_ContinuationPacket(CTAPHID_Packet):
 
     @payload.setter
     def payload(self, value):
-        payload_start = 57 + self.sequence * 59
-        payload_end = min(payload_start + 59, len(value))
+        payload_start = HID_INIT_PAYLOAD_LEN + self.sequence * HID_CONT_PAYLOAD_LEN
+        payload_end = min(payload_start + HID_INIT_PAYLOAD_LEN, len(value))
         self[5:5 + payload_end - payload_start] = \
             value[payload_start:payload_end]
 
 def continuation_packet_count(payload_len):
-    continuation_packet_count = (payload_len + 1) // 59
+    continuation_packet_count = (payload_len + 1) // HID_CONT_PAYLOAD_LEN
     return continuation_packet_count
 
 class CTAPHID_PingPacket(CTAPHID_InitializationPacket):
@@ -343,7 +347,7 @@ class HIDFidoToken(FidoToken):
         self.hid_device.write(data)
 
     def read_packet(self, continuation=False):
-        data = self.hid_device.read(64)
+        data = self.hid_device.read(HID_FRAME_SIZE)
         #print('read %d bytes: %s' % (len(data), data))
         packet = self.packet_from_data(data, continuation)
         return packet
