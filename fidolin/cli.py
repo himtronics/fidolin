@@ -2,7 +2,7 @@ import os, re, sys
 
 from .ctaphid import CTAPHID_Request, CTAPHID_Response, CTAPHID_Command
 from .ctaphid import hid_fido_tokens 
-from .u2f import U2F_Request, U2F_Response, U2F_Command
+from .u2f import U2F_AuthControl
 import click
 
 @click.group(invoke_without_command=True)
@@ -28,18 +28,21 @@ def cli(context, transport, vendor_id):
         print('wink response', wink_response._initialisation_packet)
 
         ping_request = CTAPHID_Request(fido_token, CTAPHID_Command.PING,
-            bytes(20*'abcde', encoding='ascii'))
+            bytes(25*'deadbeef', encoding='ascii'))
         ping_response = fido_token.request(ping_request)
         print('ping response', ping_response.payload)
 
-        u2f_version_request = U2F_Request(ins=U2F_Command.VERSION)
-        print('u2f_version_request', u2f_version_request)
-        msg_request = CTAPHID_Request(fido_token, CTAPHID_Command.MSG,
-            u2f_version_request)
-        msg_response = fido_token.request(msg_request)
-        u2f_version_response = U2F_Response(msg_response.payload)
-        u2f_version_response.check_sw()
-        print('msg response', u2f_version_response.data)
+        u2f_version = fido_token.u2f_version()
+        challenge = 'something wierd'
+        application = 'http://www.emesgarten.de'
+        u2f_register = fido_token.u2f_register(challenge, application)
+        public_key = u2f_register.public_key
+        key_handle = u2f_register.key_handle
+        u2f_response = fido_token.u2f_authenticate(challenge, application,
+            key_handle, control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
+        print('u2f_authenticate', u2f_response)
+        u2f_response.verify_signature(challenge, application, public_key)
+        print('counter', u2f_response.counter)
         fido_token.close()
 
 #@cli.command()

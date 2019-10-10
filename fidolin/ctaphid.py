@@ -2,7 +2,8 @@ import enum, os, time
 
 import hid
 
-from fidolin.u2f import U2F_Command, U2F_Request, U2F_Response
+from .u2f import U2F_Command, U2F_Request, U2F_Response
+from .fido import FidoToken
 
 HID_FRAME_SIZE = 64
 HID_INIT_PAYLOAD_LEN = HID_FRAME_SIZE - 7
@@ -122,7 +123,7 @@ class CTAPHID_ContinuationPacket(CTAPHID_Packet):
     @payload.setter
     def payload(self, value):
         payload_start = HID_INIT_PAYLOAD_LEN + self.sequence * HID_CONT_PAYLOAD_LEN
-        payload_end = min(payload_start + HID_INIT_PAYLOAD_LEN, len(value))
+        payload_end = min(payload_start + HID_CONT_PAYLOAD_LEN, len(value))
         self[5:5 + payload_end - payload_start] = \
             value[payload_start:payload_end]
 
@@ -133,8 +134,6 @@ def continuation_packet_count(payload_len):
 class CTAPHID_PingPacket(CTAPHID_InitializationPacket):
     _command_id = CTAPHID_Command.PING
 
-    #def __init__(self, fido_token=None, payload=None):
-    #    super().__init__(fido_token, payload)
 class CTAPHID_PingPackets(list):
     def __init__(self, fido_token=None, payload=None):
         super().__init__(self)
@@ -322,11 +321,6 @@ class CTAPHID_Response(object):
 #    CTAPCommand('CTAPHID_KEEPALIVE',0x3b,0),
 #]
 
-
-
-class FidoToken(object):
-    pass
-
 class HIDFidoToken(FidoToken):
     def __init__(self, hid_device, hid_device_info):
         self.channel_id = 0xffffffff
@@ -382,6 +376,16 @@ class HIDFidoToken(FidoToken):
                 response_packets.append(continuation_response_packet)
         response = CTAPHID_Response.from_packets(self, response_packets)
         return response
+
+    def _u2f_request(self, u2f_request):
+        '''
+        transport specific handling of a U2F request returning the raw bytes
+        of the response
+        '''
+        msg_request = CTAPHID_Request(self, CTAPHID_Command.MSG,
+            u2f_request)
+        msg_response = self.request(msg_request)
+        return msg_response.payload
 
     def close(self):
         self.hid_device.close()

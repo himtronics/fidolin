@@ -44,6 +44,8 @@ setup(
     url='https://github.com/Yubico/python-fido2',
     python_requires='>=3.6',
     install_requires=[
+        'asn1crypto',
+        'ecdsa',
         'click',
         'cryptography>=1.5',
         'hid',
