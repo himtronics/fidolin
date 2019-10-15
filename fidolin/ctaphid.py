@@ -334,6 +334,13 @@ class HIDFidoToken(FidoToken):
                 self.hid_device_info['product_id'],
                 '')
                 #self.hid_device.serial)
+
+    def initialize(self):
+        init_request = CTAPHID_Request(self, CTAPHID_Command.INIT)
+        init_response = self.request(init_request)
+        print(init_response._initialisation_packet)
+        self.channel_id = init_response._initialisation_packet.new_channel_id
+
     def write_packet(self, packet):
         # the report id must be prepended
         data = b'\x00' + bytes(packet)
