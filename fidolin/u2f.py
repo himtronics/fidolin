@@ -32,6 +32,15 @@ def der_len(data, offset):
         raise U2FError('invalid length in certificate')
     return der_len
 
+def u2f_parse_signature(signature):
+    '''
+    return a tuple r, s of integers contained in the DER encoded signature
+    '''
+    signature_asn1 = load(bytes(signature))
+    r = signature_asn1[0].native
+    s = signature_asn1[1].native
+    return r, s
+
 def u2f_verify_signature(signature, message, public_key):
     '''
     verify the signature contained in the response against the
@@ -47,11 +56,10 @@ def u2f_verify_signature(signature, message, public_key):
             curve=NIST256p, hashfunc=sha256)
     # the signature is DER encoded as 2 integers but the verify function
     # needs a 64 byte representation of these 2 integers
-    signature_asn1 = load(bytes(signature))
-    signature = \
-        signature_asn1[0].native.to_bytes(32, byteorder='big') + \
-        signature_asn1[1].native.to_bytes(32, byteorder='big')
-    verifying_key.verify(signature, message)
+    r, s = u2f_parse_signature(signature)
+    ecdsa_signature = r.to_bytes(32, byteorder='big') + \
+        s.to_bytes(32, byteorder='big')
+    verifying_key.verify(ecdsa_signature, message)
 
 class U2F_Command(enum.IntEnum):
     REGISTER = 0x01
@@ -204,11 +212,15 @@ class U2F_AuthenticateResponse(U2F_Response):
         offset = self.sig_offset
         return self[offset:offset+self.sig_len]
 
-    def verify_signature(self, challenge, application, public_key):
+    def message(self, challenge, application):
         challenge_data = sha256(challenge.encode('utf-8')).digest()
         application_data = sha256(application.encode('utf-8')).digest()
         message = application_data + bytes([self.user_presence]) + \
             self.counter.to_bytes(4, byteorder='big') + challenge_data
+        return message
+
+    def verify_signature(self, challenge, application, public_key):
+        message = self.message(challenge, application)
         u2f_verify_signature(self.signature, message, public_key)
         
 U2F_Response_by_command = {
