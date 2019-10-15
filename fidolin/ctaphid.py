@@ -3,7 +3,7 @@ import enum, os, time
 import hid
 
 from .u2f import U2F_Command, U2F_Request, U2F_Response
-from .fido import FidoToken
+from .fidotoken import FidoToken
 
 HID_FRAME_SIZE = 64
 HID_INIT_PAYLOAD_LEN = HID_FRAME_SIZE - 7

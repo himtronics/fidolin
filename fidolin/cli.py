@@ -1,9 +1,13 @@
 import os, re, sys
+from hashlib import pbkdf2_hmac, sha256
 
 from .ctaphid import CTAPHID_Request, CTAPHID_Response, CTAPHID_Command
 from .ctaphid import hid_fido_tokens 
-from .u2f import U2F_AuthControl
+from .u2f import U2F_AuthControl, u2f_parse_signature
+from .fidoclient import FidoClient
 import click
+
+from . import u2f_secret_storage
 
 @click.group(invoke_without_command=True)
 @click.option('--transport', '-t', multiple=True,
@@ -33,17 +37,54 @@ def cli(context, transport, vendor_id):
         print('ping response', ping_response.payload)
 
         u2f_version = fido_token.u2f_version()
+
+        application = 'http://www.example.com'
+        fido_client = FidoClient(application)
+
         challenge = 'something wierd'
-        application = 'http://www.emesgarten.de'
-        u2f_register = fido_token.u2f_register(challenge, application)
-        public_key = u2f_register.public_key
-        key_handle = u2f_register.key_handle
-        u2f_response = fido_token.u2f_authenticate(challenge, application,
-            key_handle, control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
-        print('u2f_authenticate', u2f_response)
-        u2f_response.verify_signature(challenge, application, public_key)
-        print('counter', u2f_response.counter)
+        fido_client.u2f_register(fido_token, challenge)
+        fido_client.u2f_authenticate(fido_token, challenge, control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
+        print('counter', fido_client.u2f_counter)
+
+        # u2f secret storage
+        application = 'example:u2f-secret-storage'
+        fido_client = FidoClient(application)
+
+        #challenge = os.urandom(32)
+        fido_client.u2f_register(fido_token, challenge)
+
+        password = 'geheim'
+        salt = os.urandom(32)
+        iterations = 50000
+        
+        key = pbkdf2_hmac('sha256', fido_client.public_key + password.encode('utf-8'), salt, iterations)
+        print('secret', key.hex())
+        #challenge = os.urandom(32)
+        u2f_response = fido_client.u2f_authenticate(fido_token, challenge, control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
+        r,s = u2f_parse_signature(u2f_response.signature)
+        print('r,s', r, s)
+
+        message = u2f_response.message(challenge, application)
+        public_keys = u2f_secret_storage.ecdsa.recover_candidate_pubkeys(
+            u2f_secret_storage.ec.nistp256, sha256, message, (r, s))
+        public_keys = [u2f_secret_storage.ec.nistp256.ec2osp(public_key)
+            for public_key in public_keys]
+
+        print('fido_client public_key', fido_client.public_key)
+        print('public_keys', public_keys)
+        for public_key in public_keys:
+            print('public_key hash', sha256(public_key).digest())
+            if public_key == fido_client.public_key:
+                break
+        else:
+            raise Exception('no public key found')
+
+        secret = pbkdf2_hmac('sha256', public_key + password.encode('utf-8'), salt, iterations)
+        print('secret is', secret.hex())
+
         fido_token.close()
+
+
 
 #@cli.command()
 #def show(context):
