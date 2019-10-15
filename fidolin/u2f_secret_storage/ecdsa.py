@@ -23,7 +23,7 @@ def sign(curve, hash, priv, message):
         k, R = curve.generate_key()
         xr = curve.fe2i(R.x)
         e, d, k, xr = ec.modp(curve.n, e, priv, k, xr)
-        s = (e + xr * d) / k
+        s = (e + xr * d) // k
         if int(xr) != 0 and int(s) != 0:
             return int(xr), int(s)
 
@@ -42,7 +42,7 @@ def verify(curve, hash, pub, message, sig):
 
     e = _hash_message(curve, hash, message)
     e, r, s = ec.modp(curve.n, e, r, s)
-    w = 1 / s
+    w = 1 // s
     u1 = e * w
     u2 = r * w
 
@@ -69,7 +69,9 @@ def recover_candidate_pubkeys(curve, hash, message, sig):
     Rp, Rn = curve.points_at_x(curve.i2fe(r))
 
     r, = ec.modp(curve.n, r)
-    rinv = 1 / r
+    print('recover_candidate_pubkeys', curve.n)
+    #rinv = ec.modint(1, curve.n) // r
+    rinv = 1 // r
 
     out = []
     for R in (Rp, Rn):
@@ -96,10 +98,10 @@ if __name__ == '__main__':
         pass
 
     k, Q = ec.nistp256.generate_key()
-    print 'pub', Q
+    print('pub', Q)
     msg = 'hello world'
     sig = sign(ec.nistp256, H, k, msg)
     verify(ec.nistp256, H, Q, msg, sig)
 
     points = recover_candidate_pubkeys(ec.nistp256, H, msg, sig)
-    print points
+    print(points)

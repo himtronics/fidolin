@@ -18,30 +18,30 @@ def egcd(x, y):
     assert x > 0 and y > 0
     g = 1
     while even(x) and even(y):
-        x = x / 2
-        y = y / 2
+        x = x // 2
+        y = y // 2
         g = g * 2
     u, v = x, y
     A, B, C, D = 1, 0, 0, 1
 
     while u != 0:
         while even(u):
-            u = u / 2
+            u = u // 2
             if even(A) and even(B):
-                A = A / 2
-                B = B / 2
+                A = A // 2
+                B = B // 2
             else:
-                A = (A + y) / 2
-                B = (B - x) / 2
+                A = (A + y) // 2
+                B = (B - x) // 2
 
         while even(v):
-            v = v / 2
+            v = v // 2
             if even(C) and even(D):
-                C = C / 2
-                D = D / 2
+                C = C // 2
+                D = D // 2
             else:
-                C = (C + y) / 2
-                D = (D - x) / 2
+                C = (C + y) // 2
+                D = (D - x) // 2
 
         if u >= v:
             u = u - v
@@ -73,7 +73,7 @@ class modint(object):
         return self.v
 
     def op(self, other, op):
-        if isinstance(other, (int, long)):
+        if isinstance(other, int):
             other = modint(other, self.p)
         r = op(self.v, other.v) % self.p
         return modint(r, self.p)
@@ -89,7 +89,7 @@ class modint(object):
     def sqrt(self):
         # only works for such primes; this is algorithm 3.36 from hac
         assert self.p % 4 == 3
-        pp = (self.p + 1) / 4
+        pp = (self.p + 1) // 4
         r = self ** pp
         return r
 
@@ -97,8 +97,8 @@ class modint(object):
     def __ne__(self, other): return int(self) != int(other)
     def __add__(self, other): return self.op(other, operator.add)
     def __sub__(self, other): return self.op(other, operator.sub)
-    def __div__(self, other): return self.op(other, lambda x, y: operator.mul(x, int(modint(y, self.p).inverse())))
-    def __rdiv__(self, other): return self.op(other, lambda y, x: operator.mul(x, int(modint(y, self.p).inverse())))
+    def __floordiv__(self, other): return self.op(other, lambda x, y: operator.mul(x, int(modint(y, self.p).inverse())))
+    def __rfloordiv__(self, other): return self.op(other, lambda y, x: operator.mul(x, int(modint(y, self.p).inverse())))
     def __mul__(self, other): return self.op(other, operator.mul)
     def __rmul__(self, other): return self.op(other, operator.mul)
     def __pow__(self, other): return self.op(other, lambda x, y: pow(x, y, self.p))
@@ -161,10 +161,10 @@ class curve_gfp(object):
     # i: integer
     # ec: point on curve
     # p suffix: padded (fixed-length encoding)
-    def os2i(self, os): return int(os.encode('hex'), 16)
+    def os2i(self, os): return int(os.hex(), 16)
     def fe2i(self, fe): return fe
     def i2fe(self, i): return i % self.n
-    def fe_bytes(self): return (self.n.bit_length() + 7) / 8
+    def fe_bytes(self): return (self.n.bit_length() + 7) // 8
     def os2ecp(self, os):
         fe_bytes = self.fe_bytes()
         assert os[0] == '\x04' # only support uncompressed
@@ -177,7 +177,7 @@ class curve_gfp(object):
         
         fe_bytes = self.fe_bytes()
         xy = (('%0' + str(fe_bytes * 2) + 'x') * 2) % (point.x, point.y)
-        return '\x04' + xy.decode('hex')
+        return b'\x04' + int(xy, 16).to_bytes(len(xy)//2, byteorder='big')
 
     def generate_key(self, rand = random.SystemRandom()):
         """
@@ -205,7 +205,7 @@ class curve_gfp(object):
         if a.x == b.x and a.y == -b.y: return point.inf()
 
         x1, y1, x2, y2 = modp(self.p, a.x, a.y, b.x, b.y)
-        L = (y2 - y1) / (x2 - x1)
+        L = (y2 - y1) // (x2 - x1)
         x3 = L ** 2 - x1 - x2
         y3 = L * (x1 - x3) - y1
         return point.xy(int(x3), int(y3))
@@ -223,7 +223,7 @@ class curve_gfp(object):
         Point doubling.  This is SEC1 section 2.2.1, clause 5.
         """
         x1, y1 = modp(self.p, a.x, a.y)
-        L = (3 * x1 ** 2 + self.a) / (2 * y1)
+        L = (3 * x1 ** 2 + self.a) // (2 * y1)
         x3 = L ** 2 - 2 * x1
         y3 = L * (x1 - x3) - y1
         return point.xy(int(x3), int(y3))
