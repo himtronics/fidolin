@@ -18,9 +18,6 @@ class CTAP_Capability(enum.IntFlag):
     NMSG = 8
 
 class CTAP_Frame(bytearray):
-    _bytecount = None
-    _command_offset = 0
-
     def __init__(self, fido_token=None):
         if fido_token:
             super().__init__(fido_token.frame_size)
@@ -29,12 +26,22 @@ class CTAP_Frame(bytearray):
         self.fido_token = fido_token
 
     @property
+    def command_offset(self):
+        return self.fido_token.frame_command_offset
+
+    @property
     def init_payload_len(self):
-        return self.fido_token.frame_size - self._command_offset - 3
+        return self.fido_token.frame_size - self.command_offset - 3
 
     @property
     def cont_payload_len(self):
-        return self.fido_token.frame_size - self._command_offset - 1
+        return self.fido_token.frame_size - self.command_offset - 1
+
+    @classmethod
+    def from_data(cls, fido_token, data):
+        self = cls(fido_token)
+        self[:] = data
+        return self
 
 class CTAP_InitializationFrame(CTAP_Frame):
     _bytecount = None
@@ -48,8 +55,8 @@ class CTAP_InitializationFrame(CTAP_Frame):
             elif payload is not None:
                 self.bytecount = len(payload)
                 self.payload = payload[:self.init_payload_len]
-            else:
-                raise Exception('no bytecount')
+            #else:
+            #    raise Exception('no bytecount')
 
     def _command_code(self):
         return 0x80 | self._command_id
@@ -60,28 +67,74 @@ class CTAP_InitializationFrame(CTAP_Frame):
 
     @property
     def command_code(self):
-        offset = self._command_offset
+        offset = self.command_offset
         return self[offset]
 
     @command_code.setter
     def command_code(self, value):
-        offset = self._command_offset
+        offset = self.command_offset
         self[offset] = value
 
     @property
     def bytecount(self):
-        offset = self._command_offset + 1
+        offset = self.command_offset + 1
         bytecount_bytes = self[offset:offset+2]
         return int.from_bytes(bytecount_bytes, byteorder='big')
 
     @bytecount.setter
     def bytecount(self, value):
-        offset = self._command_offset + 1
+        offset = self.command_offset + 1
         self[offset:offset+2] = value.to_bytes(2, byteorder='big')
 
     @property
     def payload(self):
-        offset = self._command_offset + 3
+        offset = self.command_offset + 3
         payload_len = min(self.init_payload_len, self.bytecount)
         return self[offset:offset+payload_len]
+
+    @payload.setter
+    def payload(self, value):
+        offset = self.command_offset + 3
+        self[offset:offset+len(value)] = value
+
+    def is_valid_response(self, response_frame):
+        return self.command_code == response_frame.command_code
+
+    def continuation_frame_count(self):
+        continuation_frame_count = (self.bytecount + 1) // self.cont_payload_len
+        return continuation_frame_count
+
+class CTAP_ContinuationFrame(CTAP_Frame):
+    def __init__(self, fido_token=None, payload=None, sequence=None):
+        super().__init__(fido_token)
+        if sequence is not None:
+            self.sequence = sequence
+        if payload is not None:
+            self.payload = payload
+
+    @property
+    def sequence(self):
+        offset = self.command_offset
+        return self[offset]
+
+    @sequence.setter
+    def sequence(self, value):
+        offset = self.command_offset
+        self[offset] = value
+
+    @property
+    def payload(self):
+        # bytecount not available on frame
+        offset = self.command_offset + 1
+        return self[offset:]
+
+    @payload.setter
+    def payload(self, value):
+        offset = self.command_offset + 1
+        payload_start = self.init_payload_len + \
+            self.sequence * self.cont_payload_len
+        payload_end = min(payload_start + self.cont_payload_len, len(value))
+        self[offset:offset + payload_end - payload_start] = \
+            value[payload_start:payload_end]
+
 

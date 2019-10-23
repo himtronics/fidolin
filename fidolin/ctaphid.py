@@ -2,7 +2,8 @@ import enum, os, time
 
 import hid
 
-from .ctap import CTAP_Capability, CTAP_Command, CTAP_Frame
+from .ctap import CTAP_Capability, CTAP_Command, CTAP_Frame, \
+        CTAP_InitializationFrame,CTAP_ContinuationFrame
 from .fidotoken import FidoToken
 from .u2f import U2F_Command, U2F_Request, U2F_Response
 
@@ -10,14 +11,7 @@ HID_FRAME_SIZE = 64
 HID_INIT_PAYLOAD_LEN = HID_FRAME_SIZE - 7
 HID_CONT_PAYLOAD_LEN = HID_FRAME_SIZE - 5
 
-class CTAPHID_Frame(CTAP_Frame):
-    _command_offset = 4
-
-    def __init__(self, fido_token=None):
-        super().__init__(fido_token)
-        if fido_token:
-            self.channel_id = fido_token.channel_id
-
+class CTAPHID_Frame(object):
     @property
     def channel_id(self):
         return int.from_bytes(self[0:4], byteorder='big')
@@ -26,94 +20,17 @@ class CTAPHID_Frame(CTAP_Frame):
     def channel_id(self, value):
         self[0:4] = value.to_bytes(4, byteorder='big')
 
-    @classmethod
-    def from_data(cls, fido_token, data):
-        self = cls()
-        self[:] = data
-        return self
-
-class CTAPHID_InitializationFrame(CTAPHID_Frame):
-    _bytecount = None
-
+class CTAPHID_InitializationFrame(CTAP_InitializationFrame, CTAPHID_Frame):
     def __init__(self, fido_token=None, payload=None):
-        super().__init__(fido_token)
+        super().__init__(fido_token, payload)
         if fido_token:
-            self.command_code = self._command_code()
-            if self._bytecount is not None:
-                self.bytecount = self._bytecount
-            elif payload is not None:
-                self.bytecount = len(payload)
-                self.payload = payload[:57]
-            else:
-                raise Exception('no bytecount')
+            self.channel_id = fido_token.channel_id
 
-    def _command_code(self):
-        return 0x80 | self._command_id
-
-    @property
-    def command_id(self):
-        return self.command_code & 0x7f
-
-    @property
-    def command_code(self):
-        return self[4]
-
-    @command_code.setter
-    def command_code(self, value):
-        self[4] = value
-
-    @property
-    def bytecount(self):
-        return int.from_bytes(self[5:7], byteorder='big')
-
-    @bytecount.setter
-    def bytecount(self, value):
-        self[5:7] = value.to_bytes(2, byteorder='big')
-
-    @property
-    def payload(self):
-        payload_len = min(57, self.bytecount)
-        return self[7:7+payload_len]
-
-    @payload.setter
-    def payload(self, value):
-        self[7:7+len(value)] = value
-
-    def is_valid_response(self, response_frame):
-        return self.command_code == response_frame.command_code
-
-class CTAPHID_ContinuationFrame(CTAPHID_Frame):
-    _bytecount = None
-
+class CTAPHID_ContinuationFrame(CTAP_ContinuationFrame, CTAPHID_Frame):
     def __init__(self, fido_token=None, payload=None, sequence=None):
-        super().__init__(fido_token)
+        super().__init__(fido_token, payload, sequence)
         if fido_token:
-            self.sequence = sequence
-            self.payload = payload
-
-    @property
-    def sequence(self):
-        return self[4]
-
-    @sequence.setter
-    def sequence(self, value):
-        self[4] = value
-
-    @property
-    def payload(self):
-        # bytecount not available on frame
-        return self[5:]
-
-    @payload.setter
-    def payload(self, value):
-        payload_start = HID_INIT_PAYLOAD_LEN + self.sequence * HID_CONT_PAYLOAD_LEN
-        payload_end = min(payload_start + HID_CONT_PAYLOAD_LEN, len(value))
-        self[5:5 + payload_end - payload_start] = \
-            value[payload_start:payload_end]
-
-def continuation_frame_count(payload_len):
-    continuation_frame_count = (payload_len + 1) // HID_CONT_PAYLOAD_LEN
-    return continuation_frame_count
+            self.channel_id = fido_token.channel_id
 
 class CTAPHID_PingFrame(CTAPHID_InitializationFrame):
     _command_id = CTAP_Command.PING
@@ -122,8 +39,9 @@ class CTAPHID_PingFrames(list):
     def __init__(self, fido_token=None, payload=None):
         super().__init__(self)
         if fido_token:
-            self.append(CTAPHID_PingFrame(fido_token, payload))
-            frame_count = continuation_frame_count(len(payload))
+            initialization_frame = CTAPHID_PingFrame(fido_token, payload)
+            self.append(initialization_frame)
+            frame_count = initialization_frame.continuation_frame_count()
             for sequence in range(frame_count):
                 self.append(CTAPHID_ContinuationFrame(fido_token, payload, sequence))
 
@@ -262,17 +180,17 @@ class CTAPHID_Request(object):
         self.fido_token = fido_token
         self.command_id = command_id
         self.payload = payload
-        self._initialisation_frame = None
+        self._initialization_frame = None
     def frames(self):
-        if self._initialisation_frame is None:
+        if self._initialization_frame is None:
             InitializationFrame = \
                 CTAPHID_RequestFrameByCommandId[self.command_id]
-            self._initialisation_frame = \
+            self._initialization_frame = \
                 InitializationFrame(self.fido_token, self.payload)
-        yield self._initialisation_frame
-        if self._initialisation_frame._bytecount is not None:
+        yield self._initialization_frame
+        if self._initialization_frame._bytecount is not None:
             return
-        frame_count = continuation_frame_count(len(self.payload))
+        frame_count = self._initialization_frame.continuation_frame_count()
         for sequence in range(frame_count):
             yield CTAPHID_ContinuationFrame(self.fido_token, self.payload, sequence)
 
@@ -281,16 +199,16 @@ class CTAPHID_Response(object):
         self.fido_token = fido_token
         self.command_id = command_id
         self.payload = payload
-        self._initialisation_frame = None
+        self._initialization_frame = None
 
     @classmethod
     def from_frames(cls, fido_token, frames):
-        initialisation_frame = frames[0]
+        initialization_frame = frames[0]
         payload = None
-        if initialisation_frame._bytecount is None:
-            payload = b''.join(frame.payload for frame in frames)[:initialisation_frame.bytecount]
-        response = cls(fido_token, initialisation_frame.command_id, payload)
-        response._initialisation_frame = initialisation_frame
+        if initialization_frame._bytecount is None:
+            payload = b''.join(frame.payload for frame in frames)[:initialization_frame.bytecount]
+        response = cls(fido_token, initialization_frame.command_id, payload)
+        response._initialization_frame = initialization_frame
         return response
 
 
@@ -307,6 +225,7 @@ class CTAPHID_Response(object):
 
 class HIDFidoToken(FidoToken):
     frame_size = 64
+    frame_command_offset = 4
     def __init__(self, hid_device, hid_device_info):
         self.channel_id = 0xffffffff
         self.hid_device = hid_device
@@ -323,8 +242,8 @@ class HIDFidoToken(FidoToken):
     def initialize(self):
         init_request = CTAPHID_Request(self, CTAP_Command.INIT)
         init_response = self.request(init_request)
-        print(init_response._initialisation_frame)
-        self.channel_id = init_response._initialisation_frame.new_channel_id
+        print(init_response._initialization_frame)
+        self.channel_id = init_response._initialization_frame.new_channel_id
 
     def write_frame(self, frame):
         # the report id must be prepended
@@ -356,12 +275,12 @@ class HIDFidoToken(FidoToken):
         for frame in request.frames():
             self.write_frame(frame)
         initial_response_frame = self.read_frame()
-        if not request._initialisation_frame.is_valid_response(initial_response_frame):
+        if not request._initialization_frame.is_valid_response(initial_response_frame):
             raise Exception('invalid response %s' % initial_response_frame)
         response_frames = [initial_response_frame]
         if initial_response_frame._bytecount is None:
             payload_len = initial_response_frame.bytecount
-            frame_count = continuation_frame_count(payload_len)
+            frame_count = initial_response_frame.continuation_frame_count()
             for sequence in range(frame_count):
                 continuation_response_frame = \
                     self.read_frame(continuation=True)

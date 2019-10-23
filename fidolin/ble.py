@@ -153,8 +153,8 @@ class BLEFidoDevice(BLEClient):
         return int.from_bytes(self._characteristics[BLE_Characteristic.u2fControlPointLength],
                 byteorder='big')
 
-    async def write_frame(self, frame)
-        self.write_gatt_char(self.u2f_control_point.uuid, frame)
+    async def write_frame(self, frame):
+        await self.write_gatt_char(self.u2f_control_point.uuid, frame)
 
     @property
     def u2f_service_revisions(self):
@@ -184,7 +184,7 @@ class BLEFidoToken(FidoToken):
         print("{0}: {1}".format(sender, data))
         self.notification_data.append(append)
 
-    async def write_frame(self, frame)
+    async def write_frame(self, frame):
         await self.ble_device.write_frame(frame)
 
     async def read_frame(self, continuation=False):
@@ -208,7 +208,7 @@ class BLEFidoToken(FidoToken):
                     await self.read_frame(continuation=True)
                 response_frames.append(continuation_response_frame)
         response = CTAPBLE_Response.from_frames(self, response_frames)
-        await self.ble_device..stop_notify(self.u2f_status.uuid)
+        await self.ble_device.stop_notify(self.u2f_status.uuid)
 
         return response
 

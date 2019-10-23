@@ -25,15 +25,15 @@ def cli(context, transport, vendor_id):
         print(fido_token)
         init_request = CTAPHID_Request(fido_token, CTAP_Command.INIT)
         init_response = fido_token.request(init_request)
-        print(init_response._initialisation_frame)
+        print(init_response._initialization_frame)
         #if not init_request_frame.is_valid_response(init_response_frame):
         #    fido_token.hid_device.close()
         #    continue
-        fido_token.channel_id = init_response._initialisation_frame.new_channel_id
+        fido_token.channel_id = init_response._initialization_frame.new_channel_id
 
         wink_request = CTAPHID_Request(fido_token, CTAP_Command.WINK)
         wink_response = fido_token.request(wink_request)
-        print('wink response', wink_response._initialisation_frame)
+        print('wink response', wink_response._initialization_frame)
 
         ping_request = CTAPHID_Request(fido_token, CTAP_Command.PING,
             bytes(25*'deadbeef', encoding='ascii'))
