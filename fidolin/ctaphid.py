@@ -2,35 +2,19 @@ import enum, os, time
 
 import hid
 
-from .u2f import U2F_Command, U2F_Request, U2F_Response
+from .ctap import CTAP_Capability, CTAP_Command, CTAP_Frame
 from .fidotoken import FidoToken
+from .u2f import U2F_Command, U2F_Request, U2F_Response
 
 HID_FRAME_SIZE = 64
 HID_INIT_PAYLOAD_LEN = HID_FRAME_SIZE - 7
 HID_CONT_PAYLOAD_LEN = HID_FRAME_SIZE - 5
 
-class CTAPHID_Command(enum.IntEnum):
-    PING = 0x01
-    MSG = 0x03
-    LOCK = 0x04
-    INIT = 0x06
-    WINK = 0x08
-    CANCEL = 0x11
-    CBOR = 0x10
-    ERROR = 0x3f
-    KEEPALIVE = 0x3b
-
-class CTAPHID_Capability(enum.IntFlag):
-    WINK = 1
-    LOCK = 2
-    CBOR = 4
-    NMSG = 8
-
-class CTAPHID_Packet(bytearray):
-    _bytecount = None
+class CTAPHID_Frame(CTAP_Frame):
+    _command_offset = 4
 
     def __init__(self, fido_token=None):
-        super().__init__(HID_FRAME_SIZE)
+        super().__init__(fido_token)
         if fido_token:
             self.channel_id = fido_token.channel_id
 
@@ -48,7 +32,7 @@ class CTAPHID_Packet(bytearray):
         self[:] = data
         return self
 
-class CTAPHID_InitializationPacket(CTAPHID_Packet):
+class CTAPHID_InitializationFrame(CTAPHID_Frame):
     _bytecount = None
 
     def __init__(self, fido_token=None, payload=None):
@@ -95,10 +79,10 @@ class CTAPHID_InitializationPacket(CTAPHID_Packet):
     def payload(self, value):
         self[7:7+len(value)] = value
 
-    def is_valid_response(self, response_packet):
-        return self.command_code == response_packet.command_code
+    def is_valid_response(self, response_frame):
+        return self.command_code == response_frame.command_code
 
-class CTAPHID_ContinuationPacket(CTAPHID_Packet):
+class CTAPHID_ContinuationFrame(CTAPHID_Frame):
     _bytecount = None
 
     def __init__(self, fido_token=None, payload=None, sequence=None):
@@ -117,7 +101,7 @@ class CTAPHID_ContinuationPacket(CTAPHID_Packet):
 
     @property
     def payload(self):
-        # bytecount not available on packet
+        # bytecount not available on frame
         return self[5:]
 
     @payload.setter
@@ -127,23 +111,23 @@ class CTAPHID_ContinuationPacket(CTAPHID_Packet):
         self[5:5 + payload_end - payload_start] = \
             value[payload_start:payload_end]
 
-def continuation_packet_count(payload_len):
-    continuation_packet_count = (payload_len + 1) // HID_CONT_PAYLOAD_LEN
-    return continuation_packet_count
+def continuation_frame_count(payload_len):
+    continuation_frame_count = (payload_len + 1) // HID_CONT_PAYLOAD_LEN
+    return continuation_frame_count
 
-class CTAPHID_PingPacket(CTAPHID_InitializationPacket):
-    _command_id = CTAPHID_Command.PING
+class CTAPHID_PingFrame(CTAPHID_InitializationFrame):
+    _command_id = CTAP_Command.PING
 
-class CTAPHID_PingPackets(list):
+class CTAPHID_PingFrames(list):
     def __init__(self, fido_token=None, payload=None):
         super().__init__(self)
         if fido_token:
-            self.append(CTAPHID_PingPacket(fido_token, payload))
-            packet_count = continuation_packet_count(len(payload))
-            for sequence in range(packet_count):
-                self.append(CTAPHID_ContinuationPacket(fido_token, payload, sequence))
+            self.append(CTAPHID_PingFrame(fido_token, payload))
+            frame_count = continuation_frame_count(len(payload))
+            for sequence in range(frame_count):
+                self.append(CTAPHID_ContinuationFrame(fido_token, payload, sequence))
 
-class CTAPHID_WinkPacket(CTAPHID_InitializationPacket):
+class CTAPHID_WinkFrame(CTAPHID_InitializationFrame):
     _name = 'CTAPHID_Wink'
     _command_id = 0x08
     _bytecount = 0
@@ -169,7 +153,7 @@ error_strings = {
     ERR_OTHER: 'Unspecified error',
 }
 
-class CTAPHID_ErrorPacket(CTAPHID_InitializationPacket):
+class CTAPHID_ErrorFrame(CTAPHID_InitializationFrame):
     _name = 'CTAPHID_Error'
     _command_id = 0x3f
     _bytecount = 1
@@ -187,8 +171,8 @@ class CTAPHID_ErrorPacket(CTAPHID_InitializationPacket):
     def __str__(self):
         return 'Error 0x%x: %s: %s' % (self.error_code, self.error_string, self[:8])
 
-class CTAPHID_InitRequestPacket(CTAPHID_InitializationPacket):
-    _command_id = CTAPHID_Command.INIT
+class CTAPHID_InitRequestFrame(CTAPHID_InitializationFrame):
+    _command_id = CTAP_Command.INIT
     _bytecount = 8
     
     def __init__(self, fido_token=None, payload=None):
@@ -204,7 +188,7 @@ class CTAPHID_InitRequestPacket(CTAPHID_InitializationPacket):
     def nonce(self, value):
         self[7:15] = value
 
-class CTAPHID_InitResponsePacket(CTAPHID_InitRequestPacket):
+class CTAPHID_InitResponseFrame(CTAPHID_InitRequestFrame):
     _bytecount = 17
     
     @classmethod
@@ -234,7 +218,7 @@ class CTAPHID_InitResponsePacket(CTAPHID_InitRequestPacket):
         return self[22]
     @property
     def capabilities(self):
-        return CTAPHID_Capability(self[23])
+        return CTAP_Capability(self[23])
 
     def __str__(self):
         return '\n'.join([
@@ -248,65 +232,65 @@ class CTAPHID_InitResponsePacket(CTAPHID_InitRequestPacket):
                 'capabilities: %s' % self.capabilities,
         ])
 
-class CTAPHID_MsgRequestPacket(CTAPHID_InitializationPacket):
-    _command_id = CTAPHID_Command.MSG
+class CTAPHID_MsgRequestFrame(CTAPHID_InitializationFrame):
+    _command_id = CTAP_Command.MSG
     _bytecount = None
 
-class CTAPHID_MsgResponsePacket(CTAPHID_MsgRequestPacket):
+class CTAPHID_MsgResponseFrame(CTAPHID_MsgRequestFrame):
     pass
 
-CTAPHID_RequestPackets = [
-    CTAPHID_PingPacket,
-    CTAPHID_InitRequestPacket,
-    CTAPHID_WinkPacket,
-    CTAPHID_MsgRequestPacket,
+CTAPHID_RequestFrames = [
+    CTAPHID_PingFrame,
+    CTAPHID_InitRequestFrame,
+    CTAPHID_WinkFrame,
+    CTAPHID_MsgRequestFrame,
 ]
-CTAPHID_RequestPacketByCommandId = \
-    dict((p._command_id, p) for p in CTAPHID_RequestPackets)
-CTAPHID_ResponsePackets = [
-    CTAPHID_PingPacket,
-    CTAPHID_InitResponsePacket,
-    CTAPHID_WinkPacket,
-    CTAPHID_ErrorPacket,
-    CTAPHID_MsgResponsePacket,
+CTAPHID_RequestFrameByCommandId = \
+    dict((p._command_id, p) for p in CTAPHID_RequestFrames)
+CTAPHID_ResponseFrames = [
+    CTAPHID_PingFrame,
+    CTAPHID_InitResponseFrame,
+    CTAPHID_WinkFrame,
+    CTAPHID_ErrorFrame,
+    CTAPHID_MsgResponseFrame,
 ]
-CTAPHID_ResponsePacketByCommandId = \
-    dict((p._command_id, p) for p in CTAPHID_ResponsePackets)
+CTAPHID_ResponseFrameByCommandId = \
+    dict((p._command_id, p) for p in CTAPHID_ResponseFrames)
 
 class CTAPHID_Request(object):
     def __init__(self, fido_token, command_id, payload=None):
         self.fido_token = fido_token
         self.command_id = command_id
         self.payload = payload
-        self._initialisation_packet = None
-    def packets(self):
-        if self._initialisation_packet is None:
-            InitializationPacket = \
-                CTAPHID_RequestPacketByCommandId[self.command_id]
-            self._initialisation_packet = \
-                InitializationPacket(self.fido_token, self.payload)
-        yield self._initialisation_packet
-        if self._initialisation_packet._bytecount is not None:
+        self._initialisation_frame = None
+    def frames(self):
+        if self._initialisation_frame is None:
+            InitializationFrame = \
+                CTAPHID_RequestFrameByCommandId[self.command_id]
+            self._initialisation_frame = \
+                InitializationFrame(self.fido_token, self.payload)
+        yield self._initialisation_frame
+        if self._initialisation_frame._bytecount is not None:
             return
-        packet_count = continuation_packet_count(len(self.payload))
-        for sequence in range(packet_count):
-            yield CTAPHID_ContinuationPacket(self.fido_token, self.payload, sequence)
+        frame_count = continuation_frame_count(len(self.payload))
+        for sequence in range(frame_count):
+            yield CTAPHID_ContinuationFrame(self.fido_token, self.payload, sequence)
 
 class CTAPHID_Response(object):
     def __init__(self, fido_token, command_id, payload=None):
         self.fido_token = fido_token
         self.command_id = command_id
         self.payload = payload
-        self._initialisation_packet = None
+        self._initialisation_frame = None
 
     @classmethod
-    def from_packets(cls, fido_token, packets):
-        initialisation_packet = packets[0]
+    def from_frames(cls, fido_token, frames):
+        initialisation_frame = frames[0]
         payload = None
-        if initialisation_packet._bytecount is None:
-            payload = b''.join(packet.payload for packet in packets)[:initialisation_packet.bytecount]
-        response = cls(fido_token, initialisation_packet.command_id, payload)
-        response._initialisation_packet = initialisation_packet
+        if initialisation_frame._bytecount is None:
+            payload = b''.join(frame.payload for frame in frames)[:initialisation_frame.bytecount]
+        response = cls(fido_token, initialisation_frame.command_id, payload)
+        response._initialisation_frame = initialisation_frame
         return response
 
 
@@ -322,6 +306,7 @@ class CTAPHID_Response(object):
 #]
 
 class HIDFidoToken(FidoToken):
+    frame_size = 64
     def __init__(self, hid_device, hid_device_info):
         self.channel_id = 0xffffffff
         self.hid_device = hid_device
@@ -336,52 +321,52 @@ class HIDFidoToken(FidoToken):
                 #self.hid_device.serial)
 
     def initialize(self):
-        init_request = CTAPHID_Request(self, CTAPHID_Command.INIT)
+        init_request = CTAPHID_Request(self, CTAP_Command.INIT)
         init_response = self.request(init_request)
-        print(init_response._initialisation_packet)
-        self.channel_id = init_response._initialisation_packet.new_channel_id
+        print(init_response._initialisation_frame)
+        self.channel_id = init_response._initialisation_frame.new_channel_id
 
-    def write_packet(self, packet):
+    def write_frame(self, frame):
         # the report id must be prepended
-        data = b'\x00' + bytes(packet)
+        data = b'\x00' + bytes(frame)
         #print('write %d bytes: %s' % (len(data), data))
         self.hid_device.write(data)
 
-    def read_packet(self, continuation=False):
+    def read_frame(self, continuation=False):
         data = self.hid_device.read(HID_FRAME_SIZE)
         #print('read %d bytes: %s' % (len(data), data))
-        packet = self.packet_from_data(data, continuation)
-        return packet
+        frame = self.frame_from_data(data, continuation)
+        return frame
 
-    def packet_from_data(self, data, continuation):
+    def frame_from_data(self, data, continuation):
         if continuation:
             sequence = data[4]
             if sequence & 0x80:
                 raise Exception('invalid sequence %d' % sequence)
-            Packet = CTAPHID_ContinuationPacket
+            Frame = CTAPHID_ContinuationFrame
         else:
             command_id = data[4] & 0x7f
-            if command_id not in CTAPHID_ResponsePacketByCommandId:
+            if command_id not in CTAPHID_ResponseFrameByCommandId:
                 raise Exception('invalid command in data: 0x%x' % command_id)
-            Packet = CTAPHID_ResponsePacketByCommandId[command_id]
-        packet = Packet.from_data(self, data)
-        return packet
+            Frame = CTAPHID_ResponseFrameByCommandId[command_id]
+        frame = Frame.from_data(self, data)
+        return frame
 
     def request(self, request):
-        for packet in request.packets():
-            self.write_packet(packet)
-        initial_response_packet = self.read_packet()
-        if not request._initialisation_packet.is_valid_response(initial_response_packet):
-            raise Exception('invalid response %s' % initial_response_packet)
-        response_packets = [initial_response_packet]
-        if initial_response_packet._bytecount is None:
-            payload_len = initial_response_packet.bytecount
-            packet_count = continuation_packet_count(payload_len)
-            for sequence in range(packet_count):
-                continuation_response_packet = \
-                    self.read_packet(continuation=True)
-                response_packets.append(continuation_response_packet)
-        response = CTAPHID_Response.from_packets(self, response_packets)
+        for frame in request.frames():
+            self.write_frame(frame)
+        initial_response_frame = self.read_frame()
+        if not request._initialisation_frame.is_valid_response(initial_response_frame):
+            raise Exception('invalid response %s' % initial_response_frame)
+        response_frames = [initial_response_frame]
+        if initial_response_frame._bytecount is None:
+            payload_len = initial_response_frame.bytecount
+            frame_count = continuation_frame_count(payload_len)
+            for sequence in range(frame_count):
+                continuation_response_frame = \
+                    self.read_frame(continuation=True)
+                response_frames.append(continuation_response_frame)
+        response = CTAPHID_Response.from_frames(self, response_frames)
         return response
 
     def _u2f_request(self, u2f_request):
@@ -389,7 +374,7 @@ class HIDFidoToken(FidoToken):
         transport specific handling of a U2F request returning the raw bytes
         of the response
         '''
-        msg_request = CTAPHID_Request(self, CTAPHID_Command.MSG,
+        msg_request = CTAPHID_Request(self, CTAP_Command.MSG,
             u2f_request)
         msg_response = self.request(msg_request)
         return msg_response.payload

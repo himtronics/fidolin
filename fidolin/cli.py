@@ -7,7 +7,8 @@ from cryptography.fernet import Fernet
 import click
 
 # local modules
-from .ctaphid import CTAPHID_Request, CTAPHID_Response, CTAPHID_Command
+from .ctap import CTAP_Command
+from .ctaphid import CTAPHID_Request, CTAPHID_Response
 from .ctaphid import hid_fido_tokens 
 from .u2f import U2F_AuthControl, u2f_parse_signature
 from .fidoclient import FidoClient
@@ -20,22 +21,21 @@ from .fidoclient import FidoClient
 @click.pass_context
 def cli(context, transport, vendor_id):
     vendor_id = int(vendor_id) if vendor_id else None
-    if False:
-    #for fido_token in hid_fido_tokens(vendor_id=vendor_id):
+    for fido_token in hid_fido_tokens(vendor_id=vendor_id):
         print(fido_token)
-        init_request = CTAPHID_Request(fido_token, CTAPHID_Command.INIT)
+        init_request = CTAPHID_Request(fido_token, CTAP_Command.INIT)
         init_response = fido_token.request(init_request)
-        print(init_response._initialisation_packet)
-        #if not init_request_packet.is_valid_response(init_response_packet):
+        print(init_response._initialisation_frame)
+        #if not init_request_frame.is_valid_response(init_response_frame):
         #    fido_token.hid_device.close()
         #    continue
-        fido_token.channel_id = init_response._initialisation_packet.new_channel_id
+        fido_token.channel_id = init_response._initialisation_frame.new_channel_id
 
-        wink_request = CTAPHID_Request(fido_token, CTAPHID_Command.WINK)
+        wink_request = CTAPHID_Request(fido_token, CTAP_Command.WINK)
         wink_response = fido_token.request(wink_request)
-        print('wink response', wink_response._initialisation_packet)
+        print('wink response', wink_response._initialisation_frame)
 
-        ping_request = CTAPHID_Request(fido_token, CTAPHID_Command.PING,
+        ping_request = CTAPHID_Request(fido_token, CTAP_Command.PING,
             bytes(25*'deadbeef', encoding='ascii'))
         ping_response = fido_token.request(ping_request)
         print('ping response', ping_response.payload)
@@ -43,11 +43,12 @@ def cli(context, transport, vendor_id):
         u2f_version = fido_token.u2f_version()
 
         application = 'http://www.example.com'
-        fido_client = FidoClient(application)
+        fido_client = FidoClient(fido_token, application)
 
         challenge = 'something wierd'
-        fido_client.u2f_register(fido_token, challenge)
-        fido_client.u2f_authenticate(fido_token, challenge, control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
+        u2f_response = fido_client.u2f_register(challenge)
+        fido_client.u2f_authenticate(challenge, u2f_response.key_handle,
+            control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
         print('counter', fido_client.u2f_counter)
 
 @cli.command(help='store a value of a key encrypted')
