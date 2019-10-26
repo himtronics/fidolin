@@ -1,4 +1,4 @@
-import asyncio, enum, logging
+import asyncio, enum, logging, textwrap
 
 from bleak import BleakClient, discover
 from bleak import uuids as bleak_uuids
@@ -163,6 +163,7 @@ class BLEFidoDevice(BLEClient):
 
     def __str__(self):
         strings = []
+        strings.append('Address: %s' % self.address)
         strings.append('Manufacturer: %s' % self.manufacturer)
         strings.append('Model Number: %s' % self.model_number)
         strings.append('Firmware Rev: %s' % self.firmware_revision)
@@ -215,9 +216,24 @@ class BLEFidoToken(FidoToken):
     def __str__(self):
         strings = [
             'Bluetooth Low Energy Fido Token',
-            '     UUID: %s' % self.ble_device.uuid,
+            textwrap.indent(str(self.ble_device), '    '),
         ]
         return '\n'.join(strings)
+
+async def ble_fido_tokens(addresses=[], loop=None):
+    if not addresses:
+        raise UnimplementedError('scanning for devices not possible')
+    async with BLEFidoDevice(address, loop=loop) as fido_device:
+        connected = await fido_device.is_connected()
+        log.info("Connected: {0}".format(connected))
+        if not fido_device.is_fido_device():
+            print('not a fido device')
+            return
+        await fido_device.get_gatt_characteristics()
+        print(fido_device)
+        fido_token = BLEFidoToken(fido_device)
+        print(fido_token)
+        yield fido_token
 
 
 async def run1(loop, debug=False):
@@ -235,16 +251,16 @@ async def run1(loop, debug=False):
     print('devices', len(devices))
     for d in devices:
         print('device', d)
-        async with BLEFidoClient(d.address, loop=loop) as ble_client:
-            x = await ble_client.is_connected()
+        async with BLEFidoClient(d.address, loop=loop) as fido_device:
+            x = await fido_device.is_connected()
             log.info("Connected: {0}".format(x))
 
-            print(ble_client)
-            if not ble_client.is_fido_device():
+            print(fido_device)
+            if not fido_device.is_fido_device():
                 continue
-            await ble_client.get_gatt_config()
-            print(ble_client)
-            fido_token = BLEFidoToken(ble_client, ble_service)
+            await fido_device.get_gatt_characteristics()
+            print(fido_device)
+            fido_token = BLEFidoToken(fido_device)
             print(fido_token)
             break
 
@@ -258,15 +274,15 @@ async def run2(address, loop, debug=False):
         h = logging.StreamHandler(sys.stdout)
         h.setLevel(logging.DEBUG)
         log.addHandler(h)
-    async with BLEFidoClient(address, loop=loop) as client:
-        x = await client.is_connected()
+    async with BLEFidoDevice(address, loop=loop) as fido_device:
+        x = await fido_device.is_connected()
         log.info("Connected: {0}".format(x))
-        if not client.is_fido_device():
+        if not fido_device.is_fido_device():
             print('not a fido device')
             return
-        await client.get_gatt_config()
-        print(client)
-        fido_token = BLEFidoToken(client)
+        await fido_device.get_gatt_characteristics()
+        print(fido_device)
+        fido_token = BLEFidoToken(fido_device)
         print(fido_token)
         
 

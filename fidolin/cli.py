@@ -1,6 +1,7 @@
 # standard python modules
 import base64, os, re, secrets, sys
 from hashlib import pbkdf2_hmac, sha256
+from itertools import chain
 
 #  python packages
 from cryptography.fernet import Fernet
@@ -9,19 +10,32 @@ import click
 # local modules
 from .ctap import CTAP_Command
 from .ctaphid import CTAPHID_Request, CTAPHID_Response
-from .ctaphid import hid_fido_tokens 
+from .hidtoken import hid_fido_tokens 
+from .bletoken import ble_fido_tokens 
 from .u2f import U2F_AuthControl, u2f_parse_signature
 from .fidoclient import FidoClient
 
+all_transports = ['BLE', 'NFC', 'USB']
+
 @click.group(invoke_without_command=True)
-@click.option('--transport', '-t', multiple=True,
-    type=click.Choice(['BLE', 'NFC', 'USB'], case_sensitive=False),
+@click.option('--transport', '-t', 'transports', multiple=True,
+    type=click.Choice(all_transports, case_sensitive=False),
     help='search for tokens on the corrsponding transport(s)')
-@click.option('--vendor_id', '-v')
+@click.option('--address', '-a', 'addresses', multiple=True,
+    help='address of fido token')
 @click.pass_context
-def cli(context, transport, vendor_id):
-    vendor_id = int(vendor_id) if vendor_id else None
-    for fido_token in hid_fido_tokens(vendor_id=vendor_id):
+def cli(context, transports, addresses):
+    token_chain = []
+    if not transports:
+        transports = all_transports
+    for transport in transports:
+        if transport == 'BLE':
+            token_chain.append(ble_fido_tokens(addresse=addresses))
+        #elif transport == 'NFC':
+        #    token_chain.append(nfc_fido_tokens(addresse=addresses))
+        elif transport == 'USB':
+            token_chain.append(hid_fido_tokens(addresse=addresses))
+    for fido_token in chain(*token_chain):
         print(fido_token)
         init_request = CTAPHID_Request(fido_token, CTAP_Command.INIT)
         init_response = fido_token.request(init_request)
