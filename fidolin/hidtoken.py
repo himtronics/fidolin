@@ -2,17 +2,37 @@ import enum, os, time
 
 import hid
 
-from .ctap import CTAP_Capability, CTAP_Command, CTAP_Frame, \
-        CTAP_InitializationFrame,CTAP_ContinuationFrame
+from .ctap import CTAP_Command, CTAP_Request
+from .ctaphid import CTAPHID_InitializationFrame, CTAPHID_ContinuationFrame, \
+    CTAPHID_InitRequestFrame, CTAPHID_InitResponseFrame, \
+    CTAPHID_PingFrame, CTAPHID_WinkFrame, CTAPHID_ErrorFrame, \
+    CTAPHID_MsgRequestFrame, CTAPHID_MsgResponseFrame
 from .fidotoken import FidoToken
 
 class HIDFidoToken(FidoToken):
-    frame_size = 64
+    ctap_initialization_frame_class = CTAPHID_InitializationFrame
+    ctap_continuation_frame_class = CTAPHID_ContinuationFrame
+    ctap_request_frame_class = {
+        CTAP_Command.INIT: CTAPHID_InitRequestFrame,
+        CTAP_Command.PING: CTAPHID_PingFrame,
+        CTAP_Command.WINK: CTAPHID_WinkFrame,
+        CTAP_Command.MSG: CTAPHID_MsgRequestFrame,
+    }
+    ctap_response_frame_class = {
+        CTAP_Command.INIT: CTAPHID_InitResponseFrame,
+        CTAP_Command.PING: CTAPHID_PingFrame,
+        #CTAP_Command.KEEPALIVE: CTAP_KeepaliveFrame,
+        CTAP_Command.WINK: CTAPHID_WinkFrame,
+        CTAP_Command.MSG: CTAPHID_MsgResponseFrame,
+        CTAP_Command.ERROR: CTAPHID_ErrorFrame,
+    }
+    frame_max_len = 64
     frame_command_offset = 4
     def __init__(self, hid_device, hid_device_info):
         self.channel_id = 0xffffffff
         self.hid_device = hid_device
         self.hid_device_info = hid_device_info
+
     def __str__(self):
         return '%s - %s (0x%x, 0x%x), serial: %s' % (
                 self.hid_device.manufacturer,
@@ -28,63 +48,22 @@ class HIDFidoToken(FidoToken):
         print(init_response._initialization_frame)
         self.channel_id = init_response._initialization_frame.new_channel_id
 
-    def write_frame(self, frame):
+    async def write_frame(self, frame):
         # the report id must be prepended
-        data = b'\x00' + bytes(frame)
+        data = b'\x00' + bytes(frame) + bytes(self.frame_max_len - len(frame))
         #print('write %d bytes: %s' % (len(data), data))
         self.hid_device.write(data)
 
-    def read_frame(self, continuation=False):
-        data = self.hid_device.read(HID_FRAME_SIZE)
+    async def read_frame(self, continuation=False):
+        data = self.hid_device.read(self.frame_max_len)
         #print('read %d bytes: %s' % (len(data), data))
         frame = self.frame_from_data(data, continuation)
         return frame
 
-    def frame_from_data(self, data, continuation):
-        if continuation:
-            sequence = data[4]
-            if sequence & 0x80:
-                raise Exception('invalid sequence %d' % sequence)
-            Frame = CTAPHID_ContinuationFrame
-        else:
-            command_id = data[4] & 0x7f
-            if command_id not in CTAPHID_ResponseFrameByCommandId:
-                raise Exception('invalid command in data: 0x%x' % command_id)
-            Frame = CTAPHID_ResponseFrameByCommandId[command_id]
-        frame = Frame.from_data(self, data)
-        return frame
-
-    def request(self, request):
-        for frame in request.frames():
-            self.write_frame(frame)
-        initial_response_frame = self.read_frame()
-        if not request._initialization_frame.is_valid_response(initial_response_frame):
-            raise Exception('invalid response %s' % initial_response_frame)
-        response_frames = [initial_response_frame]
-        if initial_response_frame._bytecount is None:
-            payload_len = initial_response_frame.bytecount
-            frame_count = initial_response_frame.continuation_frame_count()
-            for sequence in range(frame_count):
-                continuation_response_frame = \
-                    self.read_frame(continuation=True)
-                response_frames.append(continuation_response_frame)
-        response = CTAPHID_Response.from_frames(self, response_frames)
-        return response
-
-    def _u2f_request(self, u2f_request):
-        '''
-        transport specific handling of a U2F request returning the raw bytes
-        of the response
-        '''
-        msg_request = CTAPHID_Request(self, CTAP_Command.MSG,
-            u2f_request)
-        msg_response = self.request(msg_request)
-        return msg_response.payload
-
     def close(self):
         self.hid_device.close()
 
-def hid_fido_tokens(addresses=[], check_usage=None):
+async def hid_fido_tokens(addresses=[], check_usage=None):
     # adresses are of the form VVVV[PPPP[-S+]]] where VVVV is the hex
     # representation of the vendor id, PPPP the hex representation of
     # the product id and S+ the serial number string

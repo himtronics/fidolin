@@ -4,12 +4,12 @@ from hashlib import pbkdf2_hmac, sha256
 from itertools import chain
 
 #  python packages
+import anyio
+import asyncclick as click
 from cryptography.fernet import Fernet
-import click
 
 # local modules
-from .ctap import CTAP_Command
-from .ctaphid import CTAPHID_Request, CTAPHID_Response
+from .ctap import CTAP_Command, CTAP_Request, CTAP_Response
 from .hidtoken import hid_fido_tokens 
 from .bletoken import ble_fido_tokens 
 from .u2f import U2F_AuthControl, u2f_parse_signature
@@ -24,46 +24,45 @@ all_transports = ['BLE', 'NFC', 'USB']
 @click.option('--address', '-a', 'addresses', multiple=True,
     help='address of fido token')
 @click.pass_context
-def cli(context, transports, addresses):
+async def cli(context, transports, addresses):
     token_chain = []
     if not transports:
         transports = all_transports
     for transport in transports:
         if transport == 'BLE':
-            token_chain.append(ble_fido_tokens(addresse=addresses))
+            fido_tokens = ble_fido_tokens(addresses=addresses)
         #elif transport == 'NFC':
         #    token_chain.append(nfc_fido_tokens(addresse=addresses))
         elif transport == 'USB':
-            token_chain.append(hid_fido_tokens(addresse=addresses))
-    for fido_token in chain(*token_chain):
-        print(fido_token)
-        init_request = CTAPHID_Request(fido_token, CTAP_Command.INIT)
-        init_response = fido_token.request(init_request)
-        print(init_response._initialization_frame)
-        #if not init_request_frame.is_valid_response(init_response_frame):
-        #    fido_token.hid_device.close()
-        #    continue
-        fido_token.channel_id = init_response._initialization_frame.new_channel_id
+            fido_tokens = hid_fido_tokens(addresses=addresses)
+        async for fido_token in fido_tokens:
+            print(fido_token)
+            if transport == 'USB':
+                init_request = fido_token.ctap_request(CTAP_Command.INIT)
+                init_response = await fido_token.request(init_request)
+                print(init_response._initialization_frame)
+                fido_token.channel_id = init_response._initialization_frame.new_channel_id
 
-        wink_request = CTAPHID_Request(fido_token, CTAP_Command.WINK)
-        wink_response = fido_token.request(wink_request)
-        print('wink response', wink_response._initialization_frame)
+                # wink only available for USB
+                wink_request = fido_token.ctap_request(CTAP_Command.WINK)
+                wink_response = await fido_token.request(wink_request)
+                print('wink response', wink_response._initialization_frame)
 
-        ping_request = CTAPHID_Request(fido_token, CTAP_Command.PING,
-            bytes(25*'deadbeef', encoding='ascii'))
-        ping_response = fido_token.request(ping_request)
-        print('ping response', ping_response.payload)
+            ping_request = fido_token.ctap_request(CTAP_Command.PING,
+                bytes(25*'deadbeef', encoding='ascii'))
+            ping_response = await fido_token.request(ping_request)
+            print('ping response', ping_response.payload)
 
-        u2f_version = fido_token.u2f_version()
+            u2f_version = await fido_token.u2f_version()
 
-        application = 'http://www.example.com'
-        fido_client = FidoClient(fido_token, application)
+            application = 'http://www.example.com'
+            fido_client = FidoClient(fido_token, application)
 
-        challenge = 'something wierd'
-        u2f_response = fido_client.u2f_register(challenge)
-        fido_client.u2f_authenticate(challenge, u2f_response.key_handle,
-            control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
-        print('counter', fido_client.u2f_counter)
+            challenge = 'something wierd'
+            u2f_response = await fido_client.u2f_register(challenge)
+            await fido_client.u2f_authenticate(challenge, u2f_response.key_handle,
+                control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
+            print('counter', fido_client.u2f_counter)
 
 @cli.command(help='store a value of a key encrypted')
 @click.pass_context
@@ -91,6 +90,7 @@ def put(context, key, value):
 
 
 def main():
+    cli(_anyio_backend="asyncio")
     cli()
 
 if __name__ == '__main__':

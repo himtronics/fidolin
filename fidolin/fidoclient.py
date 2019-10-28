@@ -16,19 +16,19 @@ class FidoClient(object):
         self.fido_token = fido_token
         self.application = application
 
-    def u2f_register(self, challenge):
-        u2f_response = self.fido_token.u2f_register(challenge, self.application)
+    async def u2f_register(self, challenge):
+        u2f_response = await self.fido_token.u2f_register(challenge, self.application)
         return u2f_response
 
-    def u2f_authenticate(self, challenge, key_handle,
+    async def u2f_authenticate(self, challenge, key_handle,
             control=U2F_AuthControl.ENFORCE_USER_PRESENCE_AND_SIGN):
-        u2f_response = self.fido_token.u2f_authenticate(challenge, self.application,
+        u2f_response = await self.fido_token.u2f_authenticate(challenge, self.application,
             key_handle, control=control)
         #u2f_response.verify_signature(challenge, self.application, self.public_key)
         self.u2f_counter = u2f_response.counter
         return u2f_response 
 
-    def u2f_encrypt(self, key, value, salt, iterations):
+    async def u2f_encrypt(self, key, value, salt, iterations):
         '''
         encrypt the value for the given key and return a dictionary of values
         needed to decrypt the key with the fido_token. Note that only a hash
@@ -36,7 +36,7 @@ class FidoClient(object):
         key out of two possible values from the ec computation
         '''
         challenge = secrets.token_hex(32)
-        u2f_response = self.u2f_register(challenge)
+        u2f_response = await self.u2f_register(challenge)
         secret = pbkdf2_hmac('sha256',
             u2f_response.public_key + key.encode('utf-8'),
             salt, iterations)
@@ -47,11 +47,11 @@ class FidoClient(object):
             'public_key_hash': sha256(u2f_response.public_key).digest(),
         }
 
-    def u2f_decrypt(self, key, value, salt, iterations):
+    async def u2f_decrypt(self, key, value, salt, iterations):
         value_encrypted, key_handle, public_key_hash = itemgetter(
             'value_encrypted', 'key_handle', 'public_key_hash')(value)
         challenge = secrets.token_hex(32)
-        u2f_response = self.u2f_authenticate(challenge, key_handle,
+        u2f_response = await self.u2f_authenticate(challenge, key_handle,
             control=U2F_AuthControl.DONT_ENFORCE_USER_PRESENCE_AND_SIGN)
 
         # with the signature and the message for which the signature was generated

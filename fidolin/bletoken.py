@@ -5,10 +5,13 @@ from bleak import uuids as bleak_uuids
 #address = 'B29D9B51-EB91-4135-BB1A-B85204F480EF'
 address = 'B9B20796-F137-43D6-BE97-F4F2060EF498'
 
-from fidolin.fidotoken import FidoToken
-from fidolin.ctap import CTAP_Capability, CTAP_Command
-#from fidolin.ctapble import CTAPBLE_Capability, CTAP_Command
+from .fidotoken import FidoToken
+from .ctap import CTAP_Command, CTAP_InitializationFrame, \
+    CTAP_ContinuationFrame, CTAP_Response, CTAP_PingFrame, CTAP_WinkFrame, \
+    CTAP_KeepaliveFrame, CTAP_ErrorFrame, CTAP_MsgRequestFrame, \
+    CTAP_MsgResponseFrame
 
+logger = logging.getLogger(__name__)
 
 class BLE_DeviceType(enum.IntEnum):
     FIDO = 0xf1d0
@@ -87,7 +90,7 @@ class BLEClient(BleakClient):
                 self.add_gatt_characteristic(characteristic_id, characteristic, value)
                 #for descriptor in char.descriptors:
                 #    value = await client.read_gatt_descriptor(descriptor.handle)
-                #    log.info(
+                #    logger.info(
                 #        "\t\t[Descriptor] {0}: (Handle: {1}) | Value: {2} ".format(
                 #            descriptor.uuid, descriptor.handle, bytes(value)
                 #        )
@@ -142,7 +145,7 @@ class BLEFidoDevice(BLEClient):
 
     def add_gatt_characteristic(self, characteristic_id, characteristic, value):
         if characteristic_id == BLE_Characteristic.u2fControlPoint:
-            self.u2f_contol_point = characteristic
+            self.u2f_control_point = characteristic
         elif characteristic_id == BLE_Characteristic.u2fStatus:
             self.u2f_status = characteristic
         else:
@@ -154,6 +157,7 @@ class BLEFidoDevice(BLEClient):
                 byteorder='big')
 
     async def write_frame(self, frame):
+        print('write_frame', frame)
         await self.write_gatt_char(self.u2f_control_point.uuid, frame)
 
     @property
@@ -173,45 +177,25 @@ class BLEFidoDevice(BLEClient):
         return '\n'.join(strings)
 
 class BLEFidoToken(FidoToken):
+    ctap_initialization_frame_class = CTAP_InitializationFrame
+    ctap_continuation_frame_class = CTAP_ContinuationFrame
+    ctap_request_frame_class = {
+        CTAP_Command.PING: CTAP_PingFrame,
+        CTAP_Command.WINK: CTAP_WinkFrame,
+        CTAP_Command.MSG: CTAP_MsgRequestFrame,
+    }
+    ctap_response_frame_class = {
+        CTAP_Command.PING: CTAP_PingFrame,
+        CTAP_Command.KEEPALIVE: CTAP_KeepaliveFrame,
+        CTAP_Command.WINK: CTAP_WinkFrame,
+        CTAP_Command.MSG: CTAP_MsgResponseFrame,
+        CTAP_Command.ERROR: CTAP_ErrorFrame,
+    }
+    frame_command_offset = 0
+
     def __init__(self, ble_device):
         self.ble_device = ble_device
-        self.notification_data = []
-
-    def notification_handler(self, sender, data):
-        '''
-        store the responses in a queue for read_frame() to
-        read them
-        '''
-        print("{0}: {1}".format(sender, data))
-        self.notification_data.append(append)
-
-    async def write_frame(self, frame):
-        await self.ble_device.write_frame(frame)
-
-    async def read_frame(self, continuation=False):
-        data = self.notification_data.pop(0)
-        frame = self.frame_from_data(data, continuation)
-        return frame
-
-    async def request(self, request):
-        await self.ble_device.start_notify(self.u2f_status.uuid, notification_handler)
-        for frame in request.frames():
-            await self.write_frame(frame)
-        initial_response_frame = await self.read_frame()
-        if not request._initialisation_frame.is_valid_response(initial_response_frame):
-            raise Exception('invalid response %s' % initial_response_frame)
-        response_frames = [initial_response_frame]
-        if initial_response_frame._bytecount is None:
-            payload_len = initial_response_frame.bytecount
-            frame_count = continuation_frame_count(payload_len)
-            for sequence in range(frame_count):
-                continuation_response_frame = \
-                    await self.read_frame(continuation=True)
-                response_frames.append(continuation_response_frame)
-        response = CTAPBLE_Response.from_frames(self, response_frames)
-        await self.ble_device.stop_notify(self.u2f_status.uuid)
-
-        return response
+        self.response_frames = asyncio.Queue(128)
 
     def __str__(self):
         strings = [
@@ -220,12 +204,40 @@ class BLEFidoToken(FidoToken):
         ]
         return '\n'.join(strings)
 
+    @property
+    def frame_max_len(self):
+        return self.ble_device.u2f_frame_size
+
+    def notification_handler(self, sender, frame_data):
+        '''
+        store the responses in a queue for read_frame() to
+        read them
+        '''
+        print("{0}: {1}".format(sender, frame_data))
+        self.response_frames.put_nowait(frame_data)
+
+    async def write_frame(self, frame):
+        await self.ble_device.write_frame(frame)
+
+    async def read_frame(self, continuation=False):
+        frame_data = await self.response_frames.get()
+        frame = self.frame_from_data(frame_data, continuation)
+        return frame
+
+    async def request(self, request):
+        await self.ble_device.start_notify(self.ble_device.u2f_status.uuid,
+            self.notification_handler)
+        response = await super().request(request)
+        await self.ble_device.stop_notify(self.ble_device.u2f_status.uuid)
+
+        return response
+
 async def ble_fido_tokens(addresses=[], loop=None):
     if not addresses:
         raise UnimplementedError('scanning for devices not possible')
     async with BLEFidoDevice(address, loop=loop) as fido_device:
         connected = await fido_device.is_connected()
-        log.info("Connected: {0}".format(connected))
+        logger.info("Connected: {0}".format(connected))
         if not fido_device.is_fido_device():
             print('not a fido device')
             return
@@ -237,15 +249,14 @@ async def ble_fido_tokens(addresses=[], loop=None):
 
 
 async def run1(loop, debug=False):
-    log = logging.getLogger(__name__)
     if debug:
         import sys
 
         loop.set_debug(True)
-        log.setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
         h = logging.StreamHandler(sys.stdout)
         h.setLevel(logging.DEBUG)
-        log.addHandler(h)
+        logger.addHandler(h)
 
     devices = await discover()
     print('devices', len(devices))
@@ -253,7 +264,7 @@ async def run1(loop, debug=False):
         print('device', d)
         async with BLEFidoClient(d.address, loop=loop) as fido_device:
             x = await fido_device.is_connected()
-            log.info("Connected: {0}".format(x))
+            logger.info("Connected: {0}".format(x))
 
             print(fido_device)
             if not fido_device.is_fido_device():
@@ -270,13 +281,13 @@ async def run2(address, loop, debug=False):
         import sys
 
         loop.set_debug(True)
-        log.setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
         h = logging.StreamHandler(sys.stdout)
         h.setLevel(logging.DEBUG)
-        log.addHandler(h)
+        logger.addHandler(h)
     async with BLEFidoDevice(address, loop=loop) as fido_device:
         x = await fido_device.is_connected()
-        log.info("Connected: {0}".format(x))
+        logger.info("Connected: {0}".format(x))
         if not fido_device.is_fido_device():
             print('not a fido device')
             return
@@ -292,17 +303,17 @@ async def run3(address, loop, debug=False):
         import sys
 
         loop.set_debug(True)
-        log.setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
         h = logging.StreamHandler(sys.stdout)
         h.setLevel(logging.DEBUG)
-        log.addHandler(h)
+        logger.addHandler(h)
 
     async with BleakClient(address, loop=loop) as client:
         x = await client.is_connected()
-        log.info("Connected: {0}".format(x))
+        logger.info("Connected: {0}".format(x))
 
         for service in client.services:
-            log.info("[Service] {0}: {1}".format(service.uuid, service.description))
+            logger.info("[Service] {0}: {1}".format(service.uuid, service.description))
             for char in service.characteristics:
                 if "read" in char.properties:
                     try:
@@ -311,22 +322,22 @@ async def run3(address, loop, debug=False):
                         value = str(e).encode()
                 else:
                     value = None
-                log.info(
+                logger.info(
                     "\t[Characteristic] {0}: ({1}) | Name: {2}, Value: {3} ".format(
                         char.uuid, ",".join(char.properties), char.description, value
                     )
                 )
                 for descriptor in char.descriptors:
                     value = await client.read_gatt_descriptor(descriptor.handle)
-                    log.info(
+                    logger.info(
                         "\t\t[Descriptor] {0}: (Handle: {1}) | Value: {2} ".format(
                             descriptor.uuid, descriptor.handle, bytes(value)
                         )
                     )
 
-loop = asyncio.get_event_loop()
+#loop = asyncio.get_event_loop()
 #loop.run_until_complete(run1(loop, True))
-loop.run_until_complete(run2(address, loop))
+#loop.run_until_complete(run2(address, loop))
 #loop.run_until_complete(run3(address, loop, True))
 
 
